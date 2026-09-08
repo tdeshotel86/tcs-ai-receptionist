@@ -58,7 +58,7 @@ if prompt := st.chat_input("How can Nico help you today?"):
 
     # Send conversation to Gemini
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-3.6-flash",
         contents=contents,
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM_INSTRUCTION,
