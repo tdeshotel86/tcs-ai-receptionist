@@ -1,6 +1,7 @@
 import streamlit as st
 from google import genai
 from google.genai import types
+from google.genai.errors import APIError
 
 st.set_page_config(page_title="Total Care Squad - AI Receptionist", page_icon="🤖")
 st.title("Total Care Squad")
@@ -37,15 +38,12 @@ for msg in st.session_state.messages:
 
 # User prompt
 if prompt := st.chat_input("How can Nico help you today?"):
-    # Render user message
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Initialize client per interaction to prevent closed-socket errors
     client = genai.Client(api_key=api_key)
 
-    # Format conversation history for Gemini (roles: 'user' and 'model')
     contents = []
     for m in st.session_state.messages:
         role = "user" if m["role"] == "user" else "model"
@@ -56,19 +54,33 @@ if prompt := st.chat_input("How can Nico help you today?"):
             )
         )
 
-    # Send conversation to Gemini
-    response = client.models.generate_content(
-        model="gemini-3.6-flash",
-        contents=contents,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_INSTRUCTION,
-            temperature=0.7,
-        )
-    )
+    # Fallback model cascade to beat 503 capacity spikes
+    models_to_try = ["gemini-2.5-flash", "gemini-3.6-flash", "gemini-2.0-flash"]
+    reply_text = None
 
-    reply_text = response.text
+    for model_name in models_to_try:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_INSTRUCTION,
+                    temperature=0.7,
+                )
+            )
+            reply_text = response.text
+            if reply_text:
+                break
+        except APIError as e:
+            if "503" in str(e) or "404" in str(e):
+                continue
+            else:
+                st.error(f"API Error: {e}")
+                break
 
-    # Render assistant reply
+    if not reply_text:
+        reply_text = "Nico is experiencing heavy call volume. Please send your message again in a moment."
+
     st.session_state.messages.append({"role": "assistant", "content": reply_text})
     with st.chat_message("assistant"):
         st.markdown(reply_text)
