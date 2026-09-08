@@ -192,7 +192,7 @@ if prompt := st.chat_input("Tell Nico which service you need assistance with..."
     elif response and response.text:
         reply_text = response.text
     else:
-        reply_text = "Nico is currently handling high server demand. Please re-enter your message in a few seconds."
+        reply_text = "Nico is busy helping other customers. Please try again shortly."
 
     st.session_state.messages.append({"role": "assistant", "content": reply_text})
     with st.chat_message("assistant"):
