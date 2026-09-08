@@ -4,7 +4,6 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from google import genai
 from google.genai import types
-from google.genai.errors import APIError
 
 st.set_page_config(page_title="Total Care Squad - AI Intake", page_icon="🛡️")
 st.title("Total Care Squad")
@@ -146,53 +145,42 @@ if prompt := st.chat_input("Tell Nico which service you need assistance with..."
             )
         )
 
-    # Priority order of available models
-    models_to_try = ["gemini-2.5-flash", "gemini-3.6-flash", "gemini-2.0-flash"]
-    response = None
-
-    for model_name in models_to_try:
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=contents,
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_INSTRUCTION,
-                    tools=[service_tool],
-                    temperature=0.6,
-                )
+    try:
+        response = client.models.generate_content(
+            model="gemini-3.6-flash",
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_INSTRUCTION,
+                tools=[service_tool],
+                temperature=0.6,
             )
-            if response:
-                break
-        except APIError as e:
-            if "503" in str(e) or "404" in str(e):
-                continue
-            else:
-                break
+        )
 
-    reply_text = ""
-    if response and response.function_calls:
-        for call in response.function_calls:
-            if call.name == "dispatch_service_ticket":
-                args = call.args
-                dispatch_service_ticket(
-                    service_track=args.get("service_track", "General"),
-                    client_name=args.get("client_name", "Unknown"),
-                    contact_info=args.get("contact_info", "Not provided"),
-                    company_or_property=args.get("company_or_property", "Individual"),
-                    specific_details=args.get("specific_details", "None provided"),
-                    timeline_or_urgency=args.get("timeline_or_urgency", "Standard"),
-                    preferred_schedule=args.get("preferred_schedule", "TBD")
-                )
-                reply_text = (
-                    f"Thank you, **{args.get('client_name')}**! Your **{args.get('service_track')}** request "
-                    f"has been submitted to the Total Care Squad team. We will review your project requirements "
-                    f"and contact you shortly at **{args.get('contact_info')}**."
-                )
-                st.toast(f"📥 {args.get('service_track')} ticket emailed to dispatch!")
-    elif response and response.text:
-        reply_text = response.text
-    else:
-        reply_text = "Nico is busy helping other customers. Please try again shortly."
+        reply_text = ""
+        if response.function_calls:
+            for call in response.function_calls:
+                if call.name == "dispatch_service_ticket":
+                    args = call.args
+                    dispatch_service_ticket(
+                        service_track=args.get("service_track", "General"),
+                        client_name=args.get("client_name", "Unknown"),
+                        contact_info=args.get("contact_info", "Not provided"),
+                        company_or_property=args.get("company_or_property", "Individual"),
+                        specific_details=args.get("specific_details", "None provided"),
+                        timeline_or_urgency=args.get("timeline_or_urgency", "Standard"),
+                        preferred_schedule=args.get("preferred_schedule", "TBD")
+                    )
+                    reply_text = (
+                        f"Thank you, **{args.get('client_name')}**! Your **{args.get('service_track')}** request "
+                        f"has been submitted to the Total Care Squad team. We will review your project requirements "
+                        f"and contact you shortly at **{args.get('contact_info')}**."
+                    )
+                    st.toast(f"📥 {args.get('service_track')} ticket emailed to dispatch!")
+        else:
+            reply_text = response.text or "How can I assist you with your Total Care Squad service request?"
+
+    except Exception as e:
+        reply_text = f"Nico encountered an issue: {str(e)}"
 
     st.session_state.messages.append({"role": "assistant", "content": reply_text})
     with st.chat_message("assistant"):
