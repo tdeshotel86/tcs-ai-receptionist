@@ -5,9 +5,9 @@ from email.mime.multipart import MIMEMultipart
 from google import genai
 from google.genai import types
 
-st.set_page_config(page_title="Total Care Squad - AI Receptionist", page_icon="🤖")
+st.set_page_config(page_title="Total Care Squad - AI Intake", page_icon="🛡️")
 st.title("Total Care Squad")
-st.subheader("Virtual IT Receptionist & Intake")
+st.subheader("Virtual Receptionist & Multi-Service Intake")
 
 # Load Secrets
 api_key = st.secrets.get("GEMINI_API_KEY")
@@ -19,27 +19,43 @@ if not api_key:
     st.error("GEMINI_API_KEY secret is missing.")
     st.stop()
 
-# Email Dispatch Function
-def dispatch_intake_email(client_name: str, contact_info: str, issue_description: str, appointment_time: str):
-    """Dispatches intake details to the support team inbox."""
+# Email Dispatcher
+def dispatch_service_ticket(
+    service_track: str,
+    client_name: str,
+    contact_info: str,
+    company_or_property: str,
+    specific_details: str,
+    timeline_or_urgency: str,
+    preferred_schedule: str
+):
+    """Sends structured service form data directly to the support inbox."""
     if not email_sender or not email_password:
-        return "Email dispatch skipped: sender credentials not configured in secrets."
+        return "Email dispatch skipped: credentials missing in secrets."
 
     try:
         msg = MIMEMultipart()
         msg["From"] = email_sender
         msg["To"] = email_receiver
-        msg["Subject"] = f"🔔 New IT Support Lead: {client_name}"
+        msg["Subject"] = f"📋 [{service_track.upper()}] Intake: {client_name}"
 
-        body = f"""Total Care Squad - New Consultation Request
+        body = f"""TOTAL CARE SQUAD - SERVICE REQUEST DISPATCH
+============================================================
+SERVICE TRACK: {service_track.upper()}
 
-Client Name: {client_name}
-Contact Information: {contact_info}
-Issue Summary: {issue_description}
-Requested Date/Time: {appointment_time}
+CLIENT INFORMATION:
+- Requester Name: {client_name}
+- Contact Details: {contact_info}
+- Company / Property / Site: {company_or_property or 'Residential / Individual'}
 
----
-Dispatched automatically by Virtual Receptionist (Nico).
+PROJECT / INCIDENT SCOPE:
+{specific_details}
+
+TIMELINE / PRIORITY:
+- Urgency / Delivery Target: {timeline_or_urgency}
+- Preferred Consultation Time: {preferred_schedule}
+============================================================
+Processed autonomously by Virtual Receptionist (Nico).
 """
         msg.attach(MIMEText(body, "plain"))
 
@@ -48,53 +64,71 @@ Dispatched automatically by Virtual Receptionist (Nico).
             server.login(email_sender, email_password)
             server.send_message(msg)
 
-        return "Intake notification sent successfully to technical support."
+        return "Ticket dispatched successfully."
     except Exception as e:
-        return f"Failed to send email notification: {str(e)}"
+        return f"Dispatch failed: {str(e)}"
 
+# System Prompts & Service Routing
 SYSTEM_INSTRUCTION = """
-You are Nico, the virtual receptionist for Total Care Squad IT Support.
-Your job is to greet clients, triage technical issues, and gather intake information for IT support consultations.
+You are Nico, the virtual intake specialist for Total Care Squad.
+You handle onboarding and intake for 5 core service offerings:
+1. Cybersecurity Services (Network audits, firewall hardening, compliance, threat mitigation, employee training)
+2. Surveillance Installation (CCTV, IP camera deployment, NVR/DVR storage, residential or commercial site setup)
+3. Custom Website Request (New build, redesign, portfolio/business presence, integrations, target launch date)
+4. IT Troubleshooting Request (Hardware failures, operating system crashes, local network/Wi-Fi drops, printer outages)
+5. AI Receptionist Installation (Custom conversational voice/web agents, automated booking, API tool integrations)
 
-Intake requirements to collect:
-1. Client Full Name
-2. Preferred Contact Info (Phone or Email)
-3. Detailed description of the IT issue
-4. Preferred appointment date and time
-
-When you have collected ALL 4 pieces of information, execute the dispatch_intake_email tool to send the notification to the team, and let the user know their consultation request has been routed to a technician.
+Workflow:
+- Greet the client and identify which of the 5 services they need. If they already stated their problem, immediately match it to the correct service.
+- Ask questions 1 to 2 at a time to complete that specific service's form:
+  * Client Full Name & Preferred Contact (Email or Phone)
+  * Property/Business Type (Commercial or Residential)
+  * Core Requirements / Symptoms / Scope of Work
+  * Urgency or Target Delivery Date
+  * Preferred consultation date and time
+- When all necessary items are collected, execute the `dispatch_service_ticket` tool.
+- Confirm submission with a polite summary.
 """
 
-# Tool definition for Gemini
-email_tool = types.Tool(
+service_tool = types.Tool(
     function_declarations=[
         types.FunctionDeclaration(
-            name="dispatch_intake_email",
-            description="Sends an email notification with client intake details to technical support.",
+            name="dispatch_service_ticket",
+            description="Logs and emails the completed service intake form to Total Care Squad dispatch.",
             parameters=types.Schema(
                 type="OBJECT",
                 properties={
-                    "client_name": types.Schema(type="STRING", description="Client's full name"),
-                    "contact_info": types.Schema(type="STRING", description="Client phone number or email"),
-                    "issue_description": types.Schema(type="STRING", description="Summary of the IT problem"),
-                    "appointment_time": types.Schema(type="STRING", description="Requested consultation date and time"),
+                    "service_track": types.Schema(type="STRING", description="Cybersecurity, Surveillance Installation, Custom Website, IT Troubleshooting, or AI Receptionist"),
+                    "client_name": types.Schema(type="STRING", description="Full name of requester"),
+                    "contact_info": types.Schema(type="STRING", description="Phone number and/or email address"),
+                    "company_or_property": types.Schema(type="STRING", description="Commercial company name or residential address"),
+                    "specific_details": types.Schema(type="STRING", description="Comprehensive scope, technical specs, or problem summary"),
+                    "timeline_or_urgency": types.Schema(type="STRING", description="Critical/High/Routine or targeted launch deadline"),
+                    "preferred_schedule": types.Schema(type="STRING", description="Preferred date/time for consultation"),
                 },
-                required=["client_name", "contact_info", "issue_description", "appointment_time"]
+                required=[
+                    "service_track",
+                    "client_name",
+                    "contact_info",
+                    "specific_details",
+                    "timeline_or_urgency",
+                    "preferred_schedule"
+                ]
             )
         )
     ]
 )
 
+# Chat State
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Display conversation history
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# User Input
-if prompt := st.chat_input("How can Nico help you today?"):
+# User Chat Input
+if prompt := st.chat_input("Tell Nico which service you need assistance with..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -117,31 +151,36 @@ if prompt := st.chat_input("How can Nico help you today?"):
             contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_INSTRUCTION,
-                tools=[email_tool],
-                temperature=0.7,
+                tools=[service_tool],
+                temperature=0.6,
             )
         )
 
         reply_text = ""
-
-        # Check for function call
         if response.function_calls:
             for call in response.function_calls:
-                if call.name == "dispatch_intake_email":
+                if call.name == "dispatch_service_ticket":
                     args = call.args
-                    tool_result = dispatch_intake_email(
+                    dispatch_service_ticket(
+                        service_track=args.get("service_track", "General"),
                         client_name=args.get("client_name", "Unknown"),
                         contact_info=args.get("contact_info", "Not provided"),
-                        issue_description=args.get("issue_description", "General Inquiry"),
-                        appointment_time=args.get("appointment_time", "Pending")
+                        company_or_property=args.get("company_or_property", "Individual"),
+                        specific_details=args.get("specific_details", "None provided"),
+                        timeline_or_urgency=args.get("timeline_or_urgency", "Standard"),
+                        preferred_schedule=args.get("preferred_schedule", "TBD")
                     )
-                    reply_text = f"Thank you, {args.get('client_name')}! Your details have been submitted to Total Care Squad. We will reach out to you shortly at {args.get('contact_info')}."
-                    st.toast("📧 Intake email dispatched to support team!")
+                    reply_text = (
+                        f"Thank you, **{args.get('client_name')}**! Your **{args.get('service_track')}** request "
+                        f"has been submitted to the Total Care Squad team. We will review your project requirements "
+                        f"and contact you shortly at **{args.get('contact_info')}**."
+                    )
+                    st.toast(f"📥 {args.get('service_track')} ticket emailed to dispatch!")
         else:
-            reply_text = response.text or "How can I assist you with your IT issue?"
+            reply_text = response.text or "How can I assist you with your Total Care Squad service request?"
 
     except Exception as e:
-        reply_text = f"Nico encountered a temporary error: {str(e)}"
+        reply_text = f"Nico encountered an issue: {str(e)}"
 
     st.session_state.messages.append({"role": "assistant", "content": reply_text})
     with st.chat_message("assistant"):
