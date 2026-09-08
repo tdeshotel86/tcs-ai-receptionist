@@ -4,12 +4,13 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from google import genai
 from google.genai import types
+from google.genai.errors import APIError
 
 st.set_page_config(page_title="Total Care Squad - AI Intake", page_icon="🛡️")
 st.title("Total Care Squad")
 st.subheader("Virtual Receptionist & Multi-Service Intake")
 
-# Load Secrets
+# Retrieve secrets
 api_key = st.secrets.get("GEMINI_API_KEY")
 email_sender = st.secrets.get("EMAIL_SENDER")
 email_password = st.secrets.get("EMAIL_PASSWORD")
@@ -19,7 +20,6 @@ if not api_key:
     st.error("GEMINI_API_KEY secret is missing.")
     st.stop()
 
-# Email Dispatcher
 def dispatch_service_ticket(
     service_track: str,
     client_name: str,
@@ -68,7 +68,6 @@ Processed autonomously by Virtual Receptionist (Nico).
     except Exception as e:
         return f"Dispatch failed: {str(e)}"
 
-# System Prompts & Service Routing
 SYSTEM_INSTRUCTION = """
 You are Nico, the virtual intake specialist for Total Care Squad.
 You handle onboarding and intake for 5 core service offerings:
@@ -79,7 +78,7 @@ You handle onboarding and intake for 5 core service offerings:
 5. AI Receptionist Installation (Custom conversational voice/web agents, automated booking, API tool integrations)
 
 Workflow:
-- Greet the client and identify which of the 5 services they need. If they already stated their problem, immediately match it to the correct service.
+- Greet the client and identify which of the 5 services they need. If they already stated their problem, match it to the correct service.
 - Ask questions 1 to 2 at a time to complete that specific service's form:
   * Client Full Name & Preferred Contact (Email or Phone)
   * Property/Business Type (Commercial or Residential)
@@ -119,7 +118,6 @@ service_tool = types.Tool(
     ]
 )
 
-# Chat State
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -127,7 +125,6 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# User Chat Input
 if prompt := st.chat_input("Tell Nico which service you need assistance with..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -145,11 +142,10 @@ if prompt := st.chat_input("Tell Nico which service you need assistance with..."
             )
         )
 
-    # High-quota free tier models (1,500 requests/day vs 20 requests/day)
+    # Prioritize 1,500 requests/day models to avoid 429 quota exhaustion
     models_to_try = [
         "gemini-2.0-flash",
         "gemini-2.0-flash-lite",
-        "gemini-1.5-flash",
         "gemini-2.5-flash",
         "gemini-3.6-flash"
     ]
@@ -169,38 +165,36 @@ if prompt := st.chat_input("Tell Nico which service you need assistance with..."
             if response:
                 break
         except APIError as e:
-            # Catch rate limits (429), capacity spikes (503), and missing endpoints (404)
             err_str = str(e)
             if any(code in err_str for code in ["429", "503", "404", "RESOURCE_EXHAUSTED", "UNAVAILABLE"]):
                 continue
             else:
                 break
 
-        reply_text = ""
-        if response.function_calls:
-            for call in response.function_calls:
-                if call.name == "dispatch_service_ticket":
-                    args = call.args
-                    dispatch_service_ticket(
-                        service_track=args.get("service_track", "General"),
-                        client_name=args.get("client_name", "Unknown"),
-                        contact_info=args.get("contact_info", "Not provided"),
-                        company_or_property=args.get("company_or_property", "Individual"),
-                        specific_details=args.get("specific_details", "None provided"),
-                        timeline_or_urgency=args.get("timeline_or_urgency", "Standard"),
-                        preferred_schedule=args.get("preferred_schedule", "TBD")
-                    )
-                    reply_text = (
-                        f"Thank you, **{args.get('client_name')}**! Your **{args.get('service_track')}** request "
-                        f"has been submitted to the Total Care Squad team. We will review your project requirements "
-                        f"and contact you shortly at **{args.get('contact_info')}**."
-                    )
-                    st.toast(f"📥 {args.get('service_track')} ticket emailed to dispatch!")
-        else:
-            reply_text = response.text or "How can I assist you with your Total Care Squad service request?"
-
-    except Exception as e:
-        reply_text = f"Nico encountered an issue: {str(e)}"
+    reply_text = ""
+    if response and response.function_calls:
+        for call in response.function_calls:
+            if call.name == "dispatch_service_ticket":
+                args = call.args
+                dispatch_service_ticket(
+                    service_track=args.get("service_track", "General"),
+                    client_name=args.get("client_name", "Unknown"),
+                    contact_info=args.get("contact_info", "Not provided"),
+                    company_or_property=args.get("company_or_property", "Individual"),
+                    specific_details=args.get("specific_details", "None provided"),
+                    timeline_or_urgency=args.get("timeline_or_urgency", "Standard"),
+                    preferred_schedule=args.get("preferred_schedule", "TBD")
+                )
+                reply_text = (
+                    f"Thank you, **{args.get('client_name')}**! Your **{args.get('service_track')}** request "
+                    f"has been submitted to Total Care Squad. We will review your project requirements "
+                    f"and contact you shortly at **{args.get('contact_info')}**."
+                )
+                st.toast(f"📥 {args.get('service_track')} ticket emailed to dispatch!")
+    elif response and response.text:
+        reply_text = response.text
+    else:
+        reply_text = "Nico is currently handling heavy traffic. Please re-enter your message in a few moments."
 
     st.session_state.messages.append({"role": "assistant", "content": reply_text})
     with st.chat_message("assistant"):
