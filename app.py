@@ -1,18 +1,56 @@
 import streamlit as st
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from google import genai
 from google.genai import types
-from google.genai.errors import APIError
 
 st.set_page_config(page_title="Total Care Squad - AI Receptionist", page_icon="🤖")
 st.title("Total Care Squad")
 st.subheader("Virtual IT Receptionist & Intake")
 
-# Load API key from Streamlit Cloud Secrets
+# Load Secrets
 api_key = st.secrets.get("GEMINI_API_KEY")
+email_sender = st.secrets.get("EMAIL_SENDER")
+email_password = st.secrets.get("EMAIL_PASSWORD")
+email_receiver = st.secrets.get("EMAIL_RECEIVER", "tdeshotel86@gmail.com")
 
 if not api_key:
-    st.error("GEMINI_API_KEY secret is not set in Streamlit settings.")
+    st.error("GEMINI_API_KEY secret is missing.")
     st.stop()
+
+# Email Dispatch Function
+def dispatch_intake_email(client_name: str, contact_info: str, issue_description: str, appointment_time: str):
+    """Dispatches intake details to the support team inbox."""
+    if not email_sender or not email_password:
+        return "Email dispatch skipped: sender credentials not configured in secrets."
+
+    try:
+        msg = MIMEMultipart()
+        msg["From"] = email_sender
+        msg["To"] = email_receiver
+        msg["Subject"] = f"🔔 New IT Support Lead: {client_name}"
+
+        body = f"""Total Care Squad - New Consultation Request
+
+Client Name: {client_name}
+Contact Information: {contact_info}
+Issue Summary: {issue_description}
+Requested Date/Time: {appointment_time}
+
+---
+Dispatched automatically by Virtual Receptionist (Nico).
+"""
+        msg.attach(MIMEText(body, "plain"))
+
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
+            server.login(email_sender, email_password)
+            server.send_message(msg)
+
+        return "Intake notification sent successfully to technical support."
+    except Exception as e:
+        return f"Failed to send email notification: {str(e)}"
 
 SYSTEM_INSTRUCTION = """
 You are Nico, the virtual receptionist for Total Care Squad IT Support.
@@ -24,10 +62,29 @@ Intake requirements to collect:
 3. Detailed description of the IT issue
 4. Preferred appointment date and time
 
-Maintain a professional, helpful, and concise tone.
+When you have collected ALL 4 pieces of information, execute the dispatch_intake_email tool to send the notification to the team, and let the user know their consultation request has been routed to a technician.
 """
 
-# Initialize message history
+# Tool definition for Gemini
+email_tool = types.Tool(
+    function_declarations=[
+        types.FunctionDeclaration(
+            name="dispatch_intake_email",
+            description="Sends an email notification with client intake details to technical support.",
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "client_name": types.Schema(type="STRING", description="Client's full name"),
+                    "contact_info": types.Schema(type="STRING", description="Client phone number or email"),
+                    "issue_description": types.Schema(type="STRING", description="Summary of the IT problem"),
+                    "appointment_time": types.Schema(type="STRING", description="Requested consultation date and time"),
+                },
+                required=["client_name", "contact_info", "issue_description", "appointment_time"]
+            )
+        )
+    ]
+)
+
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -36,7 +93,7 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# User prompt
+# User Input
 if prompt := st.chat_input("How can Nico help you today?"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -54,32 +111,37 @@ if prompt := st.chat_input("How can Nico help you today?"):
             )
         )
 
-    # Fallback model cascade to beat 503 capacity spikes
-    models_to_try = ["gemini-2.5-flash", "gemini-3.6-flash", "gemini-2.0-flash"]
-    reply_text = None
-
-    for model_name in models_to_try:
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=contents,
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_INSTRUCTION,
-                    temperature=0.7,
-                )
+    try:
+        response = client.models.generate_content(
+            model="gemini-3.6-flash",
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_INSTRUCTION,
+                tools=[email_tool],
+                temperature=0.7,
             )
-            reply_text = response.text
-            if reply_text:
-                break
-        except APIError as e:
-            if "503" in str(e) or "404" in str(e):
-                continue
-            else:
-                st.error(f"API Error: {e}")
-                break
+        )
 
-    if not reply_text:
-        reply_text = "Nico is experiencing heavy call volume. Please send your message again in a moment."
+        reply_text = ""
+
+        # Check for function call
+        if response.function_calls:
+            for call in response.function_calls:
+                if call.name == "dispatch_intake_email":
+                    args = call.args
+                    tool_result = dispatch_intake_email(
+                        client_name=args.get("client_name", "Unknown"),
+                        contact_info=args.get("contact_info", "Not provided"),
+                        issue_description=args.get("issue_description", "General Inquiry"),
+                        appointment_time=args.get("appointment_time", "Pending")
+                    )
+                    reply_text = f"Thank you, {args.get('client_name')}! Your details have been submitted to Total Care Squad. We will reach out to you shortly at {args.get('contact_info')}."
+                    st.toast("📧 Intake email dispatched to support team!")
+        else:
+            reply_text = response.text or "How can I assist you with your IT issue?"
+
+    except Exception as e:
+        reply_text = f"Nico encountered a temporary error: {str(e)}"
 
     st.session_state.messages.append({"role": "assistant", "content": reply_text})
     with st.chat_message("assistant"):
