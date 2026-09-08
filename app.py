@@ -145,16 +145,36 @@ if prompt := st.chat_input("Tell Nico which service you need assistance with..."
             )
         )
 
-    try:
-        response = client.models.generate_content(
-            model="gemini-3.6-flash",
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_INSTRUCTION,
-                tools=[service_tool],
-                temperature=0.6,
+    # High-quota free tier models (1,500 requests/day vs 20 requests/day)
+    models_to_try = [
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-1.5-flash",
+        "gemini-2.5-flash",
+        "gemini-3.6-flash"
+    ]
+    response = None
+
+    for model_name in models_to_try:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_INSTRUCTION,
+                    tools=[service_tool],
+                    temperature=0.6,
+                )
             )
-        )
+            if response:
+                break
+        except APIError as e:
+            # Catch rate limits (429), capacity spikes (503), and missing endpoints (404)
+            err_str = str(e)
+            if any(code in err_str for code in ["429", "503", "404", "RESOURCE_EXHAUSTED", "UNAVAILABLE"]):
+                continue
+            else:
+                break
 
         reply_text = ""
         if response.function_calls:
