@@ -28,7 +28,7 @@ Maintain a professional, helpful, and concise tone.
 """
 
 model = genai.GenerativeModel(
-    model_name="gemini-1.5-flash",
+    model_name="gemini-1.5-flash-latest",
     system_instruction=SYSTEM_INSTRUCTION
 )
 
